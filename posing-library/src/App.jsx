@@ -5,19 +5,11 @@ import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken }
 import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 
 // --- Firebase Configuration ---
-const firebaseConfig = {
-  apiKey: "AIzaSyChDWPVbPXOhqoKCNU5gC9UA1z9z8rH6TY",
-  authDomain: "family-posing-library.firebaseapp.com",
-  projectId: "family-posing-library",
-  storageBucket: "family-posing-library.firebasestorage.app",
-  messagingSenderId: "561313353465",
-  appId: "1:561313353465:web:6f88efaa46625e0d3b5c28"
-};
-
+const firebaseConfig = JSON.parse(__firebase_config);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = 'studio-main'; // 이 부분도 꼭 이렇게 바꿔주세요!
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
 // --- Constants & Options ---
 const GRANDPARENT_OPTIONS = [
@@ -104,6 +96,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [photos, setPhotos] = useState([]);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [isMobileFilterOpen, setIsMobileFilterOpen] = useState(false); 
   
   // Multiple Images State
   const [selectedImages, setSelectedImages] = useState([]);
@@ -122,7 +115,7 @@ export default function App() {
     parents: 'both',
     children: [], 
     petCount: 0, 
-    memo: '', // 추가된 메모 필드
+    memo: '', 
   });
 
   // -- Filter State --
@@ -132,7 +125,7 @@ export default function App() {
     parents: 'all',
     children: [], 
     includePets: false, 
-    onlyFavorites: false, // 즐겨찾기 필터
+    onlyFavorites: false, 
   });
 
   // --- Auth & Data Fetching ---
@@ -186,7 +179,6 @@ export default function App() {
       alert("이미지 처리 중 오류가 발생했습니다.");
     }
     
-    // Reset input value to allow re-selecting the same file if needed
     e.target.value = '';
   };
 
@@ -194,7 +186,6 @@ export default function App() {
     setSelectedImages(prev => prev.filter((_, idx) => idx !== indexToRemove));
   };
 
-  // Upload Modal Child Handler
   const toggleUploadChildTag = (tagId) => {
     setUploadData(prev => {
       const exists = prev.children.find(c => c.id === tagId);
@@ -220,7 +211,6 @@ export default function App() {
     }));
   };
 
-  // Upload Pet Handler
   const toggleUploadPet = () => {
     setUploadData(prev => ({
         ...prev,
@@ -236,7 +226,6 @@ export default function App() {
     }));
   };
 
-  // --- Edit Handlers ---
   const handleOpenEditModal = (e, photo) => {
     e.stopPropagation();
     setEditData({
@@ -314,7 +303,6 @@ export default function App() {
     }
   };
 
-  // Filter Sidebar Child Handler
   const toggleFilterChildTag = (tagId) => {
     setFilters(prev => {
       const exists = prev.children.find(c => c.id === tagId);
@@ -347,7 +335,6 @@ export default function App() {
     try {
       const childrenTags = uploadData.children.map(c => c.id);
       
-      // Shared data for all uploaded images in this batch
       const commonData = {
         headCount: parseInt(uploadData.headCount),
         grandparents: uploadData.grandparents,
@@ -355,12 +342,11 @@ export default function App() {
         children: uploadData.children, 
         childrenTags: childrenTags,
         petCount: uploadData.petCount, 
-        memo: uploadData.memo, // 메모 저장
-        isFavorite: false, // 기본적으로 즐겨찾기 해제 상태로 저장
+        memo: uploadData.memo, 
+        isFavorite: false, 
         createdAt: serverTimestamp(),
       };
 
-      // Create a promise for each image to be uploaded concurrently
       const uploadPromises = selectedImages.map(imgDataUrl => {
         return addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'posing_refs'), {
             imageUrl: imgDataUrl,
@@ -399,7 +385,6 @@ export default function App() {
     }
   };
 
-  // Toggle Favorite Status
   const handleToggleFavorite = async (e, docId, currentStatus) => {
     e.stopPropagation();
     if (!user) return;
@@ -415,14 +400,10 @@ export default function App() {
   // --- Filtering Logic ---
   const filteredPhotos = useMemo(() => {
     return photos.filter(photo => {
-      // Favorite Filter
       if (filters.onlyFavorites && !photo.isFavorite) return false;
-
       if (filters.headCount !== 'all' && photo.headCount !== parseInt(filters.headCount)) return false;
       if (filters.grandparents !== 'all' && photo.grandparents !== filters.grandparents) return false;
       if (filters.parents !== 'all' && photo.parents !== filters.parents) return false;
-      
-      // Pet Filter Logic
       if (filters.includePets && (!photo.petCount || photo.petCount < 1)) return false;
 
       if (filters.children.length > 0) {
@@ -438,10 +419,21 @@ export default function App() {
         });
         if (!hasMatch) return false;
       }
-
       return true;
     });
   }, [photos, filters]);
+
+  // Calculate active filter count for badge
+  const activeFilterCount = useMemo(() => {
+      let count = 0;
+      if (filters.onlyFavorites) count++;
+      if (filters.headCount !== 'all') count++;
+      if (filters.grandparents !== 'all') count++;
+      if (filters.parents !== 'all') count++;
+      if (filters.includePets) count++;
+      count += filters.children.length;
+      return count;
+  }, [filters]);
 
   // --- Viewer Logic ---
   const handleNextPhoto = (e) => {
@@ -462,7 +454,6 @@ export default function App() {
     setViewingPhotoId(filteredPhotos[prevIndex].id);
   };
 
-  // Touch Swipe Logic for Viewer
   const touchStart = useRef(null);
   const touchEnd = useRef(null);
 
@@ -481,15 +472,10 @@ export default function App() {
     const isLeftSwipe = distance > 50;
     const isRightSwipe = distance < -50;
 
-    if (isLeftSwipe) {
-        handleNextPhoto();
-    }
-    if (isRightSwipe) {
-        handlePrevPhoto();
-    }
+    if (isLeftSwipe) handleNextPhoto();
+    if (isRightSwipe) handlePrevPhoto();
   };
 
-  // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e) => {
         if (!viewingPhotoId) return;
@@ -521,31 +507,171 @@ export default function App() {
 
   const viewingPhoto = useMemo(() => filteredPhotos.find(p => p.id === viewingPhotoId), [filteredPhotos, viewingPhotoId]);
 
+  // --- Shared Filter Content Component ---
+  const FilterContentControls = () => (
+    <div className="space-y-6">
+      {/* Filter: Favorite Toggle */}
+      <div className="bg-rose-500/5 p-3 rounded-lg border border-rose-500/20">
+         <button
+            onClick={() => setFilters(prev => ({...prev, onlyFavorites: !prev.onlyFavorites}))}
+            className="w-full flex items-center justify-between text-sm"
+        >
+            <div className="flex items-center gap-2 text-rose-300 font-medium">
+                <Heart className={`w-4 h-4 ${filters.onlyFavorites ? 'fill-rose-500 text-rose-500' : ''}`} />
+                즐겨찾는 시안만 보기
+            </div>
+            <div className={`w-8 h-4 rounded-full transition-colors relative ${filters.onlyFavorites ? 'bg-rose-500' : 'bg-neutral-700'}`}>
+                <div className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-transform ${filters.onlyFavorites ? 'translate-x-4' : ''}`} />
+            </div>
+        </button>
+      </div>
+
+      {/* Filter: Headcount */}
+      <div className="space-y-2">
+        <label className="text-xs font-bold text-neutral-400 uppercase tracking-wider">총 인원수</label>
+        <select 
+          value={filters.headCount}
+          onChange={(e) => setFilters({...filters, headCount: e.target.value})}
+          className="w-full bg-neutral-900 border border-neutral-600 rounded-lg p-2.5 focus:border-rose-500 outline-none text-sm transition-colors"
+        >
+          <option value="all">모든 인원</option>
+          {[...Array(20)].map((_, i) => (
+            <option key={i} value={i + 1}>{i + 1}인</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Filter: Composition (Grandparents) */}
+      <div className="space-y-2">
+        <label className="text-xs font-bold text-neutral-400 uppercase tracking-wider">조부모 구성</label>
+        <select 
+          value={filters.grandparents}
+          onChange={(e) => setFilters({...filters, grandparents: e.target.value})}
+          className="w-full bg-neutral-900 border border-neutral-600 rounded-lg p-2.5 focus:border-rose-500 outline-none text-sm"
+        >
+          <option value="all">전체</option>
+          {GRANDPARENT_OPTIONS.map(opt => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Filter: Composition (Parents) */}
+      <div className="space-y-2">
+        <label className="text-xs font-bold text-neutral-400 uppercase tracking-wider">부모 구성</label>
+        <select 
+          value={filters.parents}
+          onChange={(e) => setFilters({...filters, parents: e.target.value})}
+          className="w-full bg-neutral-900 border border-neutral-600 rounded-lg p-2.5 focus:border-rose-500 outline-none text-sm"
+        >
+          <option value="all">전체</option>
+          {PARENT_OPTIONS.map(opt => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Filter: Children */}
+      <div className="space-y-3">
+        <label className="text-xs font-bold text-neutral-400 uppercase tracking-wider">자녀 구성 및 인원</label>
+        <div className="flex flex-col gap-2">
+          {CHILD_OPTIONS.map(child => {
+            const selectedItem = filters.children.find(c => c.id === child.id);
+            const isSelected = !!selectedItem;
+            const count = selectedItem ? selectedItem.count : 0;
+
+            return (
+                <div 
+                  key={child.id}
+                  className={`
+                    rounded-lg border transition-all overflow-hidden flex flex-col
+                    ${isSelected 
+                      ? 'bg-rose-500/10 border-rose-500' 
+                      : 'bg-neutral-900 border-neutral-700 hover:border-neutral-500'}
+                  `}
+                >
+                   <button
+                      onClick={() => toggleFilterChildTag(child.id)}
+                      className={`w-full p-2.5 text-left flex items-center gap-2 ${isSelected ? 'text-white' : 'text-neutral-400'}`}
+                  >
+                      <div className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 ${isSelected ? 'border-rose-500 bg-rose-500' : 'border-neutral-600'}`}>
+                          {isSelected && <Check className="w-3 h-3 text-white" />}
+                      </div>
+                      <span className="truncate text-sm">{child.label}</span>
+                  </button>
+
+                  {isSelected && (
+                      <div className="flex items-center justify-between bg-rose-900/30 px-3 py-1.5 border-t border-rose-500/30">
+                          <span className="text-xs text-rose-300 font-semibold">{count}명</span>
+                          <div className="flex items-center gap-1">
+                              <button 
+                                  onClick={(e) => handleFilterChildCountChange(e, child.id, -1)}
+                                  className="p-1 hover:bg-rose-500/20 rounded text-rose-200"
+                                  disabled={count <= 1}
+                              >
+                                  <Minus className="w-3 h-3" />
+                              </button>
+                              <button 
+                                  onClick={(e) => handleFilterChildCountChange(e, child.id, 1)}
+                                  className="p-1 hover:bg-rose-500/20 rounded text-rose-200"
+                              >
+                                  <Plus className="w-3 h-3" />
+                              </button>
+                          </div>
+                      </div>
+                  )}
+                </div>
+            );
+          })}
+        </div>
+      </div>
+
+       {/* Filter: Pet */}
+       <div className="space-y-2">
+        <label className="text-xs font-bold text-neutral-400 uppercase tracking-wider">반려동물</label>
+        <button
+            onClick={() => setFilters(prev => ({...prev, includePets: !prev.includePets}))}
+            className={`w-full p-2.5 rounded-lg border flex items-center gap-2 transition-all ${
+                filters.includePets 
+                ? 'bg-rose-500/10 border-rose-500 text-white' 
+                : 'bg-neutral-900 border-neutral-700 text-neutral-400 hover:border-neutral-500'
+            }`}
+        >
+            <div className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 ${filters.includePets ? 'border-rose-500 bg-rose-500' : 'border-neutral-600'}`}>
+                {filters.includePets && <Check className="w-3 h-3 text-white" />}
+            </div>
+            <Dog className="w-4 h-4" />
+            <span className="text-sm">반려견 포함</span>
+        </button>
+      </div>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-neutral-900 text-neutral-100 font-sans selection:bg-rose-500 selection:text-white">
+    <div className="min-h-screen bg-neutral-900 text-neutral-100 font-sans selection:bg-rose-500 selection:text-white pb-24 lg:pb-0">
       
       {/* Header */}
-      <header className="bg-neutral-800 border-b border-neutral-700 sticky top-0 z-10 shadow-lg">
+      <header className="bg-neutral-800 border-b border-neutral-700 sticky top-0 z-40 shadow-lg">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Camera className="w-6 h-6 text-rose-500" />
-            <h1 className="text-xl font-bold tracking-tight">Studio Posing Library</h1>
+            <Camera className="w-6 h-6 text-rose-500 flex-shrink-0" />
+            <h1 className="text-lg md:text-xl font-bold tracking-tight truncate">Studio Posing Library</h1>
           </div>
           <button 
             onClick={() => setIsUploadModalOpen(true)}
-            className="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors font-medium text-sm shadow-md"
+            className="bg-rose-600 hover:bg-rose-700 text-white px-3 md:px-4 py-2 rounded-lg flex items-center gap-2 transition-colors font-medium text-sm shadow-md"
           >
             <Upload className="w-4 h-4" />
-            시안 업로드
+            <span className="hidden md:inline">시안 업로드</span>
+            <span className="md:hidden">업로드</span>
           </button>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto p-4 flex flex-col lg:flex-row gap-6">
         
-        {/* Left Sidebar: Filters */}
-        <aside className="w-full lg:w-80 flex-shrink-0 space-y-6">
+        {/* Desktop Sidebar: Filters */}
+        <aside className="hidden lg:block w-80 flex-shrink-0 space-y-6">
           <div className="bg-neutral-800 p-5 rounded-xl border border-neutral-700 shadow-sm sticky top-24 max-h-[calc(100vh-8rem)] overflow-y-auto custom-scrollbar">
             <div className="flex items-center justify-between mb-6 border-b border-neutral-700 pb-3">
               <div className="flex items-center gap-2">
@@ -559,160 +685,34 @@ export default function App() {
                 초기화
               </button>
             </div>
-
-            <div className="space-y-6">
-              
-              {/* Filter: Favorite Toggle */}
-              <div className="bg-rose-500/5 p-3 rounded-lg border border-rose-500/20">
-                 <button
-                    onClick={() => setFilters(prev => ({...prev, onlyFavorites: !prev.onlyFavorites}))}
-                    className="w-full flex items-center justify-between text-sm"
-                >
-                    <div className="flex items-center gap-2 text-rose-300 font-medium">
-                        <Heart className={`w-4 h-4 ${filters.onlyFavorites ? 'fill-rose-500 text-rose-500' : ''}`} />
-                        즐겨찾는 시안만 보기
-                    </div>
-                    <div className={`w-8 h-4 rounded-full transition-colors relative ${filters.onlyFavorites ? 'bg-rose-500' : 'bg-neutral-700'}`}>
-                        <div className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-transform ${filters.onlyFavorites ? 'translate-x-4' : ''}`} />
-                    </div>
-                </button>
-              </div>
-
-              {/* Filter: Headcount */}
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-neutral-400 uppercase tracking-wider">총 인원수</label>
-                <select 
-                  value={filters.headCount}
-                  onChange={(e) => setFilters({...filters, headCount: e.target.value})}
-                  className="w-full bg-neutral-900 border border-neutral-600 rounded-lg p-2.5 focus:border-rose-500 outline-none text-sm transition-colors"
-                >
-                  <option value="all">모든 인원</option>
-                  {[...Array(20)].map((_, i) => (
-                    <option key={i} value={i + 1}>{i + 1}인</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Filter: Composition (Grandparents) */}
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-neutral-400 uppercase tracking-wider">조부모 구성</label>
-                <select 
-                  value={filters.grandparents}
-                  onChange={(e) => setFilters({...filters, grandparents: e.target.value})}
-                  className="w-full bg-neutral-900 border border-neutral-600 rounded-lg p-2.5 focus:border-rose-500 outline-none text-sm"
-                >
-                  <option value="all">전체</option>
-                  {GRANDPARENT_OPTIONS.map(opt => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Filter: Composition (Parents) */}
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-neutral-400 uppercase tracking-wider">부모 구성</label>
-                <select 
-                  value={filters.parents}
-                  onChange={(e) => setFilters({...filters, parents: e.target.value})}
-                  className="w-full bg-neutral-900 border border-neutral-600 rounded-lg p-2.5 focus:border-rose-500 outline-none text-sm"
-                >
-                  <option value="all">전체</option>
-                  {PARENT_OPTIONS.map(opt => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Filter: Children */}
-              <div className="space-y-3">
-                <label className="text-xs font-bold text-neutral-400 uppercase tracking-wider">자녀 구성 및 인원</label>
-                <div className="flex flex-col gap-2">
-                  {CHILD_OPTIONS.map(child => {
-                    const selectedItem = filters.children.find(c => c.id === child.id);
-                    const isSelected = !!selectedItem;
-                    const count = selectedItem ? selectedItem.count : 0;
-
-                    return (
-                        <div 
-                          key={child.id}
-                          className={`
-                            rounded-lg border transition-all overflow-hidden flex flex-col
-                            ${isSelected 
-                              ? 'bg-rose-500/10 border-rose-500' 
-                              : 'bg-neutral-900 border-neutral-700 hover:border-neutral-500'}
-                          `}
-                        >
-                           <button
-                              onClick={() => toggleFilterChildTag(child.id)}
-                              className={`w-full p-2.5 text-left flex items-center gap-2 ${isSelected ? 'text-white' : 'text-neutral-400'}`}
-                          >
-                              <div className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 ${isSelected ? 'border-rose-500 bg-rose-500' : 'border-neutral-600'}`}>
-                                  {isSelected && <Check className="w-3 h-3 text-white" />}
-                              </div>
-                              <span className="truncate text-sm">{child.label}</span>
-                          </button>
-
-                          {isSelected && (
-                              <div className="flex items-center justify-between bg-rose-900/30 px-3 py-1.5 border-t border-rose-500/30">
-                                  <span className="text-xs text-rose-300 font-semibold">{count}명</span>
-                                  <div className="flex items-center gap-1">
-                                      <button 
-                                          onClick={(e) => handleFilterChildCountChange(e, child.id, -1)}
-                                          className="p-1 hover:bg-rose-500/20 rounded text-rose-200"
-                                          disabled={count <= 1}
-                                      >
-                                          <Minus className="w-3 h-3" />
-                                      </button>
-                                      <button 
-                                          onClick={(e) => handleFilterChildCountChange(e, child.id, 1)}
-                                          className="p-1 hover:bg-rose-500/20 rounded text-rose-200"
-                                      >
-                                          <Plus className="w-3 h-3" />
-                                      </button>
-                                  </div>
-                              </div>
-                          )}
-                        </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-               {/* Filter: Pet */}
-               <div className="space-y-2">
-                <label className="text-xs font-bold text-neutral-400 uppercase tracking-wider">반려동물</label>
-                <button
-                    onClick={() => setFilters(prev => ({...prev, includePets: !prev.includePets}))}
-                    className={`w-full p-2.5 rounded-lg border flex items-center gap-2 transition-all ${
-                        filters.includePets 
-                        ? 'bg-rose-500/10 border-rose-500 text-white' 
-                        : 'bg-neutral-900 border-neutral-700 text-neutral-400 hover:border-neutral-500'
-                    }`}
-                >
-                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 ${filters.includePets ? 'border-rose-500 bg-rose-500' : 'border-neutral-600'}`}>
-                        {filters.includePets && <Check className="w-3 h-3 text-white" />}
-                    </div>
-                    <Dog className="w-4 h-4" />
-                    <span className="text-sm">반려견 포함</span>
-                </button>
-              </div>
-            </div>
+            <FilterContentControls />
           </div>
         </aside>
 
         {/* Right Content: Gallery */}
-        <div className="flex-1">
+        <div className="flex-1 w-full">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-lg font-medium text-neutral-300">
               검색 결과 <span className="text-rose-500 font-bold ml-1">{filteredPhotos.length}</span>건
             </h3>
+            {/* Mobile Reset Button */}
+            <div className="lg:hidden">
+                {(activeFilterCount > 0) && (
+                    <button 
+                        onClick={() => setFilters({ headCount: 'all', grandparents: 'all', parents: 'all', children: [], includePets: false, onlyFavorites: false })}
+                        className="text-xs text-rose-400 border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 rounded-full"
+                    >
+                        필터 초기화
+                    </button>
+                )}
+            </div>
           </div>
 
           {filteredPhotos.length === 0 ? (
-            <div className="h-96 flex flex-col items-center justify-center text-neutral-500 border-2 border-dashed border-neutral-800 rounded-2xl bg-neutral-800/30">
+            <div className="h-[60vh] flex flex-col items-center justify-center text-neutral-500 border-2 border-dashed border-neutral-800 rounded-2xl bg-neutral-800/30">
               <ImageIcon className="w-16 h-16 mb-4 opacity-20" />
-              <p className="text-lg">해당 조건의 레퍼런스가 없습니다.</p>
-              <p className="text-sm mt-2">조건을 변경하거나 새로운 시안을 업로드해주세요.</p>
+              <p className="text-lg text-center px-4">해당 조건의 레퍼런스가 없습니다.</p>
+              <p className="text-sm mt-2 text-center px-4">필터를 초기화하거나 시안을 업로드해주세요.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -732,7 +732,7 @@ export default function App() {
                     
                     {/* Hover Overlay */}
                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-300 flex items-center justify-center">
-                        <Maximize2 className="text-white opacity-0 group-hover:opacity-100 transform scale-75 group-hover:scale-100 transition-all drop-shadow-lg w-8 h-8" />
+                        <Maximize2 className="text-white opacity-0 group-hover:opacity-100 transform scale-75 group-hover:scale-100 transition-all drop-shadow-lg w-8 h-8 hidden md:block" />
                     </div>
                     
                     {/* Top Action Buttons (Favorite & Delete) */}
@@ -742,11 +742,11 @@ export default function App() {
                         className={`p-2 rounded-full transition-all backdrop-blur-sm ${photo.isFavorite ? 'bg-rose-500/20 text-rose-500 hover:bg-rose-500/40' : 'bg-black/50 text-white/70 hover:text-white hover:bg-black/70'}`}
                         title={photo.isFavorite ? "즐겨찾기 해제" : "즐겨찾기 추가"}
                       >
-                        <Heart className={`w-4 h-4 ${photo.isFavorite ? 'fill-current' : ''}`} />
+                        <Heart className={`w-4 h-4 md:w-5 md:h-5 ${photo.isFavorite ? 'fill-current' : ''}`} />
                       </button>
                     </div>
 
-                    <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex gap-2">
+                    <div className="absolute top-3 right-3 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity z-10 flex gap-2">
                       <button 
                         onClick={(e) => handleOpenEditModal(e, photo)}
                         className="p-2 bg-black/50 text-white rounded-full hover:bg-blue-600 transition-colors backdrop-blur-sm"
@@ -777,19 +777,19 @@ export default function App() {
                     <div className="space-y-1">
                       {photo.grandparents !== 'none' && (
                         <div className="flex items-center gap-2 text-sm text-neutral-300">
-                          <UserPlus className="w-3.5 h-3.5 text-rose-400" />
-                          <span>{getLabel(GRANDPARENT_OPTIONS, photo.grandparents)}</span>
+                          <UserPlus className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
+                          <span className="truncate">{getLabel(GRANDPARENT_OPTIONS, photo.grandparents)}</span>
                         </div>
                       )}
                       {photo.parents !== 'none' && (
                         <div className="flex items-center gap-2 text-sm text-neutral-300">
-                          <Users className="w-3.5 h-3.5 text-blue-400" />
-                          <span>{getLabel(PARENT_OPTIONS, photo.parents)}</span>
+                          <Users className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
+                          <span className="truncate">{getLabel(PARENT_OPTIONS, photo.parents)}</span>
                         </div>
                       )}
                       {(photo.children?.length > 0 || (Array.isArray(photo.children) && photo.children.length > 0)) && (
                         <div className="flex items-start gap-2 text-sm text-neutral-300 mt-1">
-                          <Baby className="w-3.5 h-3.5 text-yellow-400 mt-0.5" />
+                          <Baby className="w-3.5 h-3.5 text-yellow-400 mt-0.5 flex-shrink-0" />
                           <div className="flex flex-wrap gap-1">
                             {photo.children.map((c, idx) => (
                                 <React.Fragment key={idx}>
@@ -802,7 +802,7 @@ export default function App() {
                       {/* Pet Display in Card */}
                       {photo.petCount > 0 && (
                         <div className="flex items-center gap-2 text-sm text-neutral-300 mt-1">
-                            <Dog className="w-3.5 h-3.5 text-rose-400" />
+                            <Dog className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
                             <span className="text-xs bg-neutral-700 px-1.5 py-0.5 rounded text-neutral-300">
                                 반려견 {photo.petCount}마리
                             </span>
@@ -825,57 +825,113 @@ export default function App() {
         </div>
       </main>
 
+      {/* FAB (Floating Action Button) for Mobile Filters */}
+      <button
+        onClick={() => setIsMobileFilterOpen(true)}
+        className="lg:hidden fixed bottom-6 right-6 bg-rose-600 text-white p-4 rounded-full shadow-2xl flex items-center justify-center z-30 hover:bg-rose-700 active:scale-95 transition-transform"
+      >
+        <Filter className="w-6 h-6" />
+        {activeFilterCount > 0 && (
+            <span className="absolute top-0 right-0 -mt-1 -mr-1 bg-white text-rose-600 text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full border-2 border-rose-600">
+                {activeFilterCount}
+            </span>
+        )}
+      </button>
+
+      {/* Mobile Filter Modal (Bottom Sheet style) */}
+      {isMobileFilterOpen && (
+        <div className="fixed inset-0 z-[100] flex flex-col justify-end bg-black/80 backdrop-blur-sm lg:hidden animate-in fade-in duration-200">
+            <div 
+                className="absolute inset-0" 
+                onClick={() => setIsMobileFilterOpen(false)}
+            />
+            <div className="bg-neutral-800 w-full rounded-t-2xl shadow-2xl border-t border-neutral-700 flex flex-col max-h-[85vh] relative z-10 animate-in slide-in-from-bottom-full duration-300">
+                {/* Header */}
+                <div className="flex items-center justify-between p-5 border-b border-neutral-700">
+                    <div className="flex items-center gap-2">
+                        <Filter className="w-5 h-5 text-rose-500" />
+                        <h2 className="font-bold text-lg text-white">필터 검색</h2>
+                        {activeFilterCount > 0 && (
+                            <span className="bg-rose-500 text-white text-xs font-bold px-2 py-0.5 rounded-full ml-1">
+                                {activeFilterCount}
+                            </span>
+                        )}
+                    </div>
+                    <button onClick={() => setIsMobileFilterOpen(false)} className="text-neutral-400 hover:text-white p-1">
+                        <X className="w-6 h-6" />
+                    </button>
+                </div>
+                
+                {/* Scrollable Content */}
+                <div className="p-5 overflow-y-auto pb-24 custom-scrollbar">
+                    <FilterContentControls />
+                </div>
+
+                {/* Fixed Bottom Button */}
+                <div className="absolute bottom-0 w-full p-4 bg-gradient-to-t from-neutral-900 via-neutral-900 to-transparent pt-10">
+                    <button 
+                        onClick={() => setIsMobileFilterOpen(false)}
+                        className="w-full py-3.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl shadow-lg flex items-center justify-center gap-2"
+                    >
+                        {filteredPhotos.length}개의 시안 보기
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+
       {/* Lightbox Modal (High Quality Viewer with Slide & Swipe) */}
       {viewingPhoto && (
         <div 
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/95 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/95 backdrop-blur-sm p-4 animate-in fade-in duration-200"
           onClick={() => setViewingPhotoId(null)}
         >
-          {/* Navigation Controls */}
+          {/* Navigation Controls (All Devices) */}
           {filteredPhotos.length > 1 && (
             <>
                 <button 
                     onClick={handlePrevPhoto}
-                    className="absolute left-4 top-1/2 -translate-y-1/2 p-3 text-white/50 hover:text-white hover:bg-white/10 rounded-full transition-all z-[70] hidden md:block"
+                    className="absolute left-2 md:left-6 top-1/2 -translate-y-1/2 p-3 md:p-4 text-white bg-black/60 hover:bg-black/80 rounded-full transition-all z-[999] shadow-2xl backdrop-blur-md"
                 >
-                    <ChevronLeft className="w-10 h-10" />
+                    <ChevronLeft className="w-7 h-7 md:w-10 md:h-10 drop-shadow-lg" />
                 </button>
                 <button 
                     onClick={handleNextPhoto}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 p-3 text-white/50 hover:text-white hover:bg-white/10 rounded-full transition-all z-[70] hidden md:block"
+                    className="absolute right-2 md:right-6 top-1/2 -translate-y-1/2 p-3 md:p-4 text-white bg-black/60 hover:bg-black/80 rounded-full transition-all z-[999] shadow-2xl backdrop-blur-md"
                 >
-                    <ChevronRight className="w-10 h-10" />
+                    <ChevronRight className="w-7 h-7 md:w-10 md:h-10 drop-shadow-lg" />
                 </button>
             </>
           )}
 
           {/* Top Controls */}
-          <div className="absolute top-6 right-6 flex items-center gap-4 z-[70]">
+          <div className="absolute top-4 right-4 md:top-6 md:right-6 flex items-center gap-3 z-[120]">
              <button 
                 onClick={(e) => handleOpenEditModal(e, viewingPhoto)}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-full transition-all backdrop-blur-sm border bg-white/10 border-white/10 text-white hover:bg-white/20"
+                className="flex items-center gap-1.5 md:gap-2 px-3 py-1.5 rounded-full transition-all backdrop-blur-sm border bg-white/10 border-white/10 text-white hover:bg-white/20"
              >
                 <Settings className="w-4 h-4" />
-                <span className="text-xs font-bold">설정 수정</span>
+                <span className="text-xs font-bold hidden md:inline">설정 수정</span>
              </button>
              <button 
                 onClick={(e) => handleToggleFavorite(e, viewingPhoto.id, viewingPhoto.isFavorite)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-full transition-all backdrop-blur-sm border ${viewingPhoto.isFavorite ? 'bg-rose-500/20 border-rose-500 text-rose-400' : 'bg-white/10 border-white/10 text-white hover:bg-white/20'}`}
+                className={`flex items-center gap-1.5 md:gap-2 px-3 py-1.5 rounded-full transition-all backdrop-blur-sm border ${viewingPhoto.isFavorite ? 'bg-rose-500/20 border-rose-500 text-rose-400' : 'bg-white/10 border-white/10 text-white hover:bg-white/20'}`}
              >
                 <Heart className={`w-4 h-4 ${viewingPhoto.isFavorite ? 'fill-current' : ''}`} />
-                <span className="text-xs font-bold">{viewingPhoto.isFavorite ? '즐겨찾기 취소' : '즐겨찾기'}</span>
+                <span className="text-xs font-bold hidden md:inline">{viewingPhoto.isFavorite ? '즐겨찾기 취소' : '즐겨찾기'}</span>
              </button>
              <button 
                 onClick={() => setViewingPhotoId(null)}
-                className="p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-full transition-colors"
+                className="p-1.5 md:p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-full transition-colors ml-1"
              >
-               <X className="w-8 h-8" />
+               <X className="w-6 h-6 md:w-8 md:h-8" />
              </button>
           </div>
           
           {/* Image Container with Swipe Detection */}
           <div 
-            className="relative w-full h-full flex flex-col items-center justify-center"
+            className="relative w-full h-full flex flex-col items-center justify-center pt-16 pb-20 md:pt-0 md:pb-0"
             onTouchStart={onTouchStart}
             onTouchMove={onTouchMove}
             onTouchEnd={onTouchEnd}
@@ -884,23 +940,23 @@ export default function App() {
             <img 
               src={viewingPhoto.imageUrl} 
               alt="Full Size Reference" 
-              className="w-auto h-auto max-w-full max-h-[85vh] object-contain rounded-sm shadow-2xl select-none"
+              className="w-auto h-auto max-w-full max-h-[75vh] md:max-h-[85vh] object-contain rounded-sm shadow-2xl select-none"
             />
             
             {/* Memo Display in Viewer */}
             {viewingPhoto.memo && (
-                <div className="absolute bottom-4 left-4 right-4 md:left-auto md:right-auto bg-black/70 backdrop-blur-md px-6 py-4 rounded-xl border border-white/10 shadow-2xl max-w-2xl text-center">
+                <div className="absolute bottom-[80px] left-4 right-4 md:bottom-4 md:left-auto md:right-auto bg-black/70 backdrop-blur-md px-4 md:px-6 py-3 md:py-4 rounded-xl border border-white/10 shadow-2xl text-center md:max-w-2xl z-10">
                     <div className="flex items-center justify-center gap-2 mb-1">
                         <AlignLeft className="w-4 h-4 text-rose-400" />
-                        <span className="text-xs font-bold text-rose-400 uppercase tracking-widest">촬영 팁</span>
+                        <span className="text-[10px] md:text-xs font-bold text-rose-400 uppercase tracking-widest">촬영 팁</span>
                     </div>
-                    <p className="text-white text-sm leading-relaxed">{viewingPhoto.memo}</p>
+                    <p className="text-white text-xs md:text-sm leading-relaxed">{viewingPhoto.memo}</p>
                 </div>
             )}
 
             {/* Slide Indicator Overlay (Mobile Hint) */}
-            <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 text-white/30 text-xs px-3 py-1 bg-black/20 rounded-full backdrop-blur-sm md:hidden">
-                ↔ 좌우로 밀어서 이동
+            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 text-white/40 text-xs px-4 py-2 bg-black/40 rounded-full backdrop-blur-md md:hidden z-10 flex items-center gap-2">
+                좌우로 스와이프 하거나 화살표 터치
             </div>
           </div>
         </div>
@@ -908,14 +964,14 @@ export default function App() {
 
       {/* Edit Modal */}
       {editData && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <div className="bg-neutral-800 w-full max-w-3xl rounded-2xl shadow-2xl border border-neutral-700 flex flex-col max-h-[90vh]">
             
             {/* Modal Header */}
-            <div className="flex items-center justify-between p-6 border-b border-neutral-700">
+            <div className="flex items-center justify-between p-5 md:p-6 border-b border-neutral-700">
               <div className="flex items-center gap-3">
                 <Settings className="w-5 h-5 text-rose-500" />
-                <h2 className="text-xl font-bold text-white">레퍼런스 설정 수정</h2>
+                <h2 className="text-lg md:text-xl font-bold text-white">레퍼런스 설정 수정</h2>
               </div>
               <button onClick={() => setEditData(null)} className="text-neutral-400 hover:text-white">
                 <X className="w-6 h-6" />
@@ -923,11 +979,11 @@ export default function App() {
             </div>
 
             {/* Modal Body */}
-            <div className="p-6 overflow-y-auto flex-1 space-y-8">
+            <div className="p-5 md:p-6 overflow-y-auto flex-1 space-y-6 md:space-y-8 custom-scrollbar">
               {/* Image Preview */}
               <div className="space-y-3">
                 <label className="block text-sm font-bold text-neutral-300">원본 사진</label>
-                <div className="w-32 h-40 rounded-lg border border-neutral-600 overflow-hidden bg-neutral-900">
+                <div className="w-24 h-32 md:w-32 md:h-40 rounded-lg border border-neutral-600 overflow-hidden bg-neutral-900">
                     <img src={editData.imageUrl} alt="Edit Preview" className="w-full h-full object-cover" />
                 </div>
               </div>
@@ -935,7 +991,7 @@ export default function App() {
               <hr className="border-neutral-700" />
 
               {/* Tagging Section */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
                 
                 {/* 1. Headcount */}
                 <div className="space-y-2">
@@ -986,7 +1042,7 @@ export default function App() {
                 <label className="block text-sm font-bold text-neutral-300">
                     자녀 구성 & 인원 수
                 </label>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                   {CHILD_OPTIONS.map(child => {
                     const selectedItem = editData.children.find(c => c.id === child.id);
                     const isSelected = !!selectedItem;
@@ -1099,17 +1155,17 @@ export default function App() {
             </div>
 
             {/* Modal Footer */}
-            <div className="p-6 border-t border-neutral-700 flex justify-end gap-3 bg-neutral-800 rounded-b-2xl">
+            <div className="p-4 md:p-6 border-t border-neutral-700 flex justify-end gap-3 bg-neutral-800 rounded-b-2xl">
               <button 
                 onClick={() => setEditData(null)}
-                className="px-6 py-2.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-700 font-medium transition-colors"
+                className="px-4 md:px-6 py-2.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-700 font-medium transition-colors text-sm md:text-base"
               >
                 취소
               </button>
               <button 
                 onClick={handleEditSave}
                 disabled={isUploading}
-                className="px-6 py-2.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-medium shadow-lg hover:shadow-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-all"
+                className="px-4 md:px-6 py-2.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-medium shadow-lg hover:shadow-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-all text-sm md:text-base"
               >
                 {isUploading ? '저장 중...' : (
                   <>
@@ -1126,41 +1182,48 @@ export default function App() {
 
       {/* Upload Modal */}
       {isUploadModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <div className="bg-neutral-800 w-full max-w-3xl rounded-2xl shadow-2xl border border-neutral-700 flex flex-col max-h-[90vh]">
             
             {/* Modal Header */}
-            <div className="flex items-center justify-between p-6 border-b border-neutral-700">
+            <div className="flex items-center justify-between p-5 md:p-6 border-b border-neutral-700">
               <div className="flex items-center gap-3">
-                <Upload className="w-5 h-5 text-rose-500" />
-                <h2 className="text-xl font-bold text-white">새 레퍼런스 일괄 등록</h2>
+                <Upload className="w-5 h-5 text-rose-500 flex-shrink-0" />
+                <h2 className="text-lg md:text-xl font-bold text-white truncate">새 레퍼런스 일괄 등록</h2>
                 {selectedImages.length > 0 && (
-                    <span className="bg-rose-500/20 text-rose-400 text-xs font-bold px-2.5 py-1 rounded-full border border-rose-500/30">
+                    <span className="hidden sm:inline-block bg-rose-500/20 text-rose-400 text-xs font-bold px-2.5 py-1 rounded-full border border-rose-500/30 whitespace-nowrap">
                         {selectedImages.length}/10 장 선택됨
                     </span>
                 )}
               </div>
-              <button onClick={() => setIsUploadModalOpen(false)} className="text-neutral-400 hover:text-white">
+              <button onClick={() => setIsUploadModalOpen(false)} className="text-neutral-400 hover:text-white p-1">
                 <X className="w-6 h-6" />
               </button>
             </div>
 
             {/* Modal Body - Scrollable */}
-            <div className="p-6 overflow-y-auto flex-1 space-y-8">
+            <div className="p-5 md:p-6 overflow-y-auto flex-1 space-y-6 md:space-y-8 custom-scrollbar">
               
               {/* Image Input (Multi-select Grid) */}
               <div className="space-y-3">
-                <label className="block text-sm font-bold text-neutral-300">사진 선택 (최대 10장)</label>
+                <div className="flex items-center justify-between">
+                    <label className="block text-sm font-bold text-neutral-300">사진 선택 (최대 10장)</label>
+                    {selectedImages.length > 0 && (
+                        <span className="sm:hidden bg-rose-500/20 text-rose-400 text-xs font-bold px-2 py-0.5 rounded-full border border-rose-500/30">
+                            {selectedImages.length}/10 장
+                        </span>
+                    )}
+                </div>
                 
-                <div className="flex flex-wrap gap-4">
+                <div className="flex flex-wrap gap-3 md:gap-4">
                   {selectedImages.map((imgSrc, idx) => (
-                    <div key={idx} className="relative w-28 h-36 rounded-lg border border-neutral-600 overflow-hidden group shadow-md">
+                    <div key={idx} className="relative w-20 h-28 md:w-28 md:h-36 rounded-lg border border-neutral-600 overflow-hidden group shadow-md">
                         <img src={imgSrc} alt={`Preview ${idx}`} className="w-full h-full object-cover" />
                         <button 
                             onClick={() => removeSelectedImage(idx)} 
-                            className="absolute top-1.5 right-1.5 bg-black/60 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500"
+                            className="absolute top-1.5 right-1.5 bg-black/60 text-white rounded-full p-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity hover:bg-red-500"
                         >
-                            <X className="w-4 h-4" />
+                            <X className="w-3 h-3 md:w-4 md:h-4" />
                         </button>
                     </div>
                   ))}
@@ -1168,17 +1231,17 @@ export default function App() {
                   {/* Add File Button */}
                   {selectedImages.length < 10 && (
                     <label className={`
-                        w-28 h-36 rounded-lg border-2 border-dashed border-neutral-600 flex flex-col items-center justify-center cursor-pointer hover:border-rose-500 hover:bg-rose-500/5 transition-all
-                        ${selectedImages.length === 0 ? 'w-full md:w-64 aspect-video md:aspect-auto' : ''}
+                        w-20 h-28 md:w-28 md:h-36 rounded-lg border-2 border-dashed border-neutral-600 flex flex-col items-center justify-center cursor-pointer hover:border-rose-500 hover:bg-rose-500/5 transition-all
+                        ${selectedImages.length === 0 ? 'w-full aspect-video md:aspect-auto' : ''}
                     `}>
-                        <ImageIcon className="w-8 h-8 text-neutral-500 mb-2" />
-                        <span className="text-xs text-neutral-400 font-medium">
-                            {selectedImages.length === 0 ? '클릭하여 여러 장 선택' : '사진 추가'}
+                        <ImageIcon className="w-6 h-6 md:w-8 md:h-8 text-neutral-500 mb-1 md:mb-2" />
+                        <span className="text-[10px] md:text-xs text-neutral-400 font-medium">
+                            {selectedImages.length === 0 ? '클릭하여 선택' : '사진 추가'}
                         </span>
                         <input 
                             type="file" 
                             accept="image/*"
-                            multiple // 다중 선택 허용
+                            multiple 
                             onChange={handleFileSelect}
                             className="hidden"
                         />
@@ -1187,9 +1250,9 @@ export default function App() {
                 </div>
                 
                 {selectedImages.length === 0 && (
-                    <div className="text-sm text-neutral-400 pt-1">
+                    <div className="text-xs md:text-sm text-neutral-400 pt-1">
                         <p>한 가족의 다양한 포즈 컷을 여러 장 동시에 올려보세요.</p>
-                        <p className="text-rose-500 text-xs font-bold mt-1">* 한 번의 태그 설정으로 모든 사진에 동일하게 적용됩니다.</p>
+                        <p className="text-rose-500 text-[10px] md:text-xs font-bold mt-1">* 한 번의 태그 설정으로 모든 사진에 동일하게 적용됩니다.</p>
                     </div>
                 )}
               </div>
@@ -1197,7 +1260,7 @@ export default function App() {
               <hr className="border-neutral-700" />
 
               {/* Tagging Section */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
                 
                 {/* 1. Headcount */}
                 <div className="space-y-2">
@@ -1205,7 +1268,7 @@ export default function App() {
                   <select 
                     value={uploadData.headCount}
                     onChange={(e) => setUploadData({...uploadData, headCount: parseInt(e.target.value)})}
-                    className="w-full bg-neutral-900 border border-neutral-600 rounded-lg p-3 focus:border-rose-500 outline-none"
+                    className="w-full bg-neutral-900 border border-neutral-600 rounded-lg p-3 focus:border-rose-500 outline-none text-sm md:text-base"
                   >
                     {[...Array(20)].map((_, i) => (
                       <option key={i} value={i + 1}>{i + 1}명</option>
@@ -1219,7 +1282,7 @@ export default function App() {
                   <select 
                     value={uploadData.parents}
                     onChange={(e) => setUploadData({...uploadData, parents: e.target.value})}
-                    className="w-full bg-neutral-900 border border-neutral-600 rounded-lg p-3 focus:border-rose-500 outline-none"
+                    className="w-full bg-neutral-900 border border-neutral-600 rounded-lg p-3 focus:border-rose-500 outline-none text-sm md:text-base"
                   >
                     {PARENT_OPTIONS.map(opt => (
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -1233,7 +1296,7 @@ export default function App() {
                   <select 
                     value={uploadData.grandparents}
                     onChange={(e) => setUploadData({...uploadData, grandparents: e.target.value})}
-                    className="w-full bg-neutral-900 border border-neutral-600 rounded-lg p-3 focus:border-rose-500 outline-none"
+                    className="w-full bg-neutral-900 border border-neutral-600 rounded-lg p-3 focus:border-rose-500 outline-none text-sm md:text-base"
                   >
                     {GRANDPARENT_OPTIONS.map(opt => (
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -1248,7 +1311,7 @@ export default function App() {
                 <label className="block text-sm font-bold text-neutral-300">
                     자녀 구성 & 인원 수
                 </label>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                   {CHILD_OPTIONS.map(child => {
                     const selectedItem = uploadData.children.find(c => c.id === child.id);
                     const isSelected = !!selectedItem;
@@ -1306,7 +1369,7 @@ export default function App() {
                     반려동물
                 </label>
                 <div className={`
-                    relative rounded-lg border transition-all overflow-hidden flex flex-col w-full md:w-1/2
+                    relative rounded-lg border transition-all overflow-hidden flex flex-col w-full sm:w-1/2 md:w-1/3
                     ${uploadData.petCount > 0 
                     ? 'bg-rose-500/10 border-rose-500' 
                     : 'bg-neutral-900 border-neutral-700 hover:border-neutral-500'}
@@ -1353,7 +1416,7 @@ export default function App() {
                  <textarea 
                     value={uploadData.memo}
                     onChange={(e) => setUploadData({...uploadData, memo: e.target.value})}
-                    placeholder="예: 애플박스 2개 사용, 창가 자연광, 하이앵글 촬영 등 (이 메모는 선택된 모든 사진에 공통 적용됩니다)"
+                    placeholder="예: 애플박스 2개 사용, 창가 자연광, 하이앵글 촬영 등"
                     className="w-full bg-neutral-900 border border-neutral-600 rounded-lg p-3 text-sm text-white focus:border-rose-500 outline-none resize-none h-24 custom-scrollbar"
                  />
                </div>
@@ -1361,19 +1424,19 @@ export default function App() {
             </div>
 
             {/* Modal Footer */}
-            <div className="p-6 border-t border-neutral-700 flex justify-end gap-3 bg-neutral-800 rounded-b-2xl">
+            <div className="p-4 md:p-6 border-t border-neutral-700 flex justify-end gap-3 bg-neutral-800 rounded-b-2xl">
               <button 
                 onClick={() => setIsUploadModalOpen(false)}
-                className="px-6 py-2.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-700 font-medium transition-colors"
+                className="px-4 md:px-6 py-2.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-700 font-medium transition-colors text-sm md:text-base"
               >
                 취소
               </button>
               <button 
                 onClick={handleUpload}
                 disabled={selectedImages.length === 0 || isUploading}
-                className="px-6 py-2.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-medium shadow-lg hover:shadow-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-all"
+                className="px-4 md:px-6 py-2.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-medium shadow-lg hover:shadow-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-all text-sm md:text-base"
               >
-                {isUploading ? '일괄 저장 중...' : (
+                {isUploading ? '저장 중...' : (
                   <>
                     <Save className="w-4 h-4" />
                     일괄 저장하기
