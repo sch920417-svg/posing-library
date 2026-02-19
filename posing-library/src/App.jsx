@@ -5,11 +5,31 @@ import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken }
 import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 
 // --- Firebase Configuration ---
-const firebaseConfig = JSON.parse(__firebase_config);
+let firebaseConfig;
+let currentAppId;
+
+// 환경을 자동 감지하여 Firebase 정보를 설정합니다.
+if (typeof __firebase_config !== 'undefined') {
+  // 1. Gemini Canvas (미리보기) 환경일 경우
+  firebaseConfig = JSON.parse(__firebase_config);
+  currentAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+} else {
+  // 2. Vercel 배포 및 로컬 환경일 경우 (작가님의 실제 데이터베이스)
+  firebaseConfig = {
+    apiKey: "AIzaSyChDWPVbPXOhqoKCNU5gC9UA1z9z8rH6TY",
+    authDomain: "family-posing-library.firebaseapp.com",
+    projectId: "family-posing-library",
+    storageBucket: "family-posing-library.firebasestorage.app",
+    messagingSenderId: "561313353465",
+    appId: "1:561313353465:web:6f88efaa46625e0d3b5c28"
+  };
+  currentAppId = 'studio-main';
+}
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const appId = currentAppId;
 
 // --- Constants & Options ---
 const GRANDPARENT_OPTIONS = [
@@ -131,10 +151,17 @@ export default function App() {
   // --- Auth & Data Fetching ---
   useEffect(() => {
     const initAuth = async () => {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-            await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-            await signInAnonymously(auth);
+        try {
+            // Canvas 환경에서만 __initial_auth_token을 사용하고, Vercel에서는 익명 로그인 사용
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token && typeof __firebase_config !== 'undefined') {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+                await signInAnonymously(auth);
+            }
+        } catch (error) {
+            console.error("Auth error:", error);
+            // 에러 발생시 안전하게 익명 로그인으로 폴백
+            await signInAnonymously(auth).catch(console.error);
         }
     };
     initAuth();
